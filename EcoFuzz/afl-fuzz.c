@@ -276,6 +276,7 @@ struct queue_entry {
     mutation_num,                   /* Number of mutating the test case */
     exec_by_mutation,               /* Number of mutated by this test   */
     num_mutated,
+    num_selected,
             num_executed,
             energy_used,
             power,                          /* Power of mutation number         */
@@ -8166,10 +8167,11 @@ static void save_cmdline(u32 argc, char **argv) {
 
 int main(int argc, char **argv) {
 
-    s32 opt;
+    s32 opt, fd;
     u64 prev_queued = 0;
     u32 sync_interval_cnt = 0, seek_to;
-    u8 * extras_dir = 0;
+    u8 * extras_dir = 0,
+    *tmp;
     u8 mem_limit_given = 0;
     u8 exit_1 = !!getenv("AFL_BENCH_JUST_ONE");
     char **use_argv;
