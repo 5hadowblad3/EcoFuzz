@@ -125,7 +125,7 @@ skip_requested,            /* Skip request, via SIGUSR1        */
 run_over10m,               /* Run time over 10 minutes?        */
 persistent_mode,           /* Running in persistent mode?      */
 deferred_mode,             /* Deferred forkserver mode?        */
-logging
+logging,
 fast_cal;                  /* Try to calibrate faster?         */
 
 static s32 out_fd,                    /* Persistent fd for out_file       */
