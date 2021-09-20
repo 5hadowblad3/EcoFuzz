@@ -237,8 +237,7 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 
 static FILE *plot_file,               /* Gnuplot output file              */
 *time_file,               /* Time output file                 */
-*profile_file
-*
+*profile_file,
 information_file;        /* Information output file          */
 
 struct queue_entry {
