@@ -125,6 +125,7 @@ EXP_ST u8  skip_deterministic,        /* Skip deterministic stages?       */
            run_over10m,               /* Run time over 10 minutes?        */
            persistent_mode,           /* Running in persistent mode?      */
            deferred_mode,             /* Deferred forkserver mode?        */
+           logging
            fast_cal;                  /* Try to calibrate faster?         */
 
 static s32 out_fd,                    /* Persistent fd for out_file       */
@@ -176,6 +177,9 @@ EXP_ST u32 queued_paths,              /* Total number of queued testcases */
 
 EXP_ST u64 total_crashes,             /* Total number of crashes          */
            unique_crashes,            /* Crashes with unique signatures   */
+           total_fuzz,
+           total_selected,
+           total_energy_used,
            total_tmouts,              /* Total number of timeouts         */
            unique_tmouts,             /* Timeouts with unique signatures  */
            unique_hangs,              /* Hangs with unique signatures     */
@@ -200,7 +204,7 @@ static u8 *stage_name = "init",       /* Name of the current fuzz stage   */
           *stage_short,               /* Short stage name                 */
           *syncing_party;             /* Currently syncing with...        */
 
-static s32 stage_cur, stage_max;      /* Stage progression                */
+          static s32 stage_cur, stage_max, stage_last, stage_overall;      /* Stage progression                */
 static s32 splicing_with = -1;        /* Splicing with which test case?   */
 
 static u32 master_id, master_max;     /* Master instance job splitting    */
@@ -233,6 +237,7 @@ static s32 cpu_aff = -1;       	      /* Selected CPU core                */
 
 static FILE *plot_file,               /* Gnuplot output file              */
             *time_file,               /* Time output file                 */
+            *profile_file
             *information_file;        /* Information output file          */
 
 struct queue_entry {
@@ -257,6 +262,10 @@ struct queue_entry {
       chose_time,                     /* Number of times chose for fuzz   */
       serial,                         /* Serial number of this test case  */
       exec_cksum;                     /* Checksum of the execution trace  */
+      u32 p_len;
+      u32 pn_len;
+      u32 new_find;
+      u32 last_find;
 
   u64 exec_us,                        /* Execution time (us)              */
       handicap,                       /* Number of queue cycles behind    */
@@ -265,6 +274,9 @@ struct queue_entry {
       last_energy,                    /* Number of test cases last fuzzing*/
       mutation_num,                   /* Number of mutating the test case */
       exec_by_mutation,               /* Number of mutated by this test   */
+      num_mutated,
+      num_executed,
+      energy_used,
       power,                          /* Power of mutation number         */
       depth;                          /* Path depth                       */
 
@@ -892,6 +904,18 @@ static void add_to_queue(u8* fname, u32 len, u8 passed_det) {
   q->last_energy = 0;
   q->state = 0;
   q->serial = queued_paths;
+
+  q->num_selected = 0;
+  q->trace_mini = 0;
+  q->new_find = 0;
+  q->num_mutated = 0;
+  q->num_executed = 0;
+  q->was_fuzzed = 0;
+  q->energy_used = 0;
+  q->last_find = 0;
+
+  q->p_len = 0;
+  q->pn_len = 0;
 
   if (q->depth > max_depth) max_depth = q->depth;
 
@@ -1524,6 +1548,13 @@ EXP_ST void setup_shm(void) {
   u8* shm_str;
 
   if (!in_bitmap) memset(virgin_bits, 255, MAP_SIZE);
+
+  total_fuzz = 0;
+  total_selected = 0;
+  total_energy_used = 1;
+  stage_last = 0;
+  stage_overall = 0;
+  queued_discovered = 0;
 
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
@@ -3313,6 +3344,10 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
   if(cksum == queue_cur->exec_cksum)
     queue_cur->exec_by_mutation++;
 
+  if (checksum == queue_cur->exec_cksum) {
+      queue_cur->num_executed++;
+  }
+
   if (fault == crash_mode) {
 
     /* Keep only if there are new bits in the map, add to queue for
@@ -3335,6 +3370,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
     add_to_queue(fn, len, 0);
+    queue_cur->new_find++;
+    queue_cur->last_find = 1;
 
     if (hnb == 2) {
       queue_top->has_new_cov = 1;
@@ -4858,7 +4895,17 @@ EXP_ST u8 common_fuzz_stuff(char** argv, u8* out_buf, u32 len) {
 
   queue_cur->mutation_num++;
 
-  queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+//  queued_discovered += save_if_interesting(argv, out_buf, len, fault);
+  u8 found;
+  found = save_if_interesting(argv, out_buf, len, fault);
+
+  if (found) {
+      queue_cur->energy_used += stage_overall - stage_last;
+      total_energy_used += stage_overall - stage_last;
+      stage_last = stage_overall;
+  }
+
+  queued_discovered += found;
 
   if (!(stage_cur % stats_update_freq) || stage_cur + 1 == stage_max)
     show_stats();
@@ -6800,6 +6847,8 @@ havoc_stage:
       havoc_queued = queued_paths;
       regret = (float)record_num / stage_max;
 
+      queue_cur->num_mutated++;
+
     }
 
   }
@@ -8068,7 +8117,7 @@ int main(int argc, char** argv) {
   gettimeofday(&tv, &tz);
   srandom(tv.tv_sec ^ tv.tv_usec ^ getpid());
 
-  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Q")) > 0)
+  while ((opt = getopt(argc, argv, "+i:o:f:m:t:T:dnCB:S:M:x:Ql")) > 0)
 
     switch (opt) {
 
@@ -8236,6 +8285,10 @@ int main(int argc, char** argv) {
 
         break;
 
+        case 'l':
+            logging = 1;
+            break;
+
       default:
 
         usage(argv[0]);
@@ -8392,7 +8445,7 @@ int main(int argc, char** argv) {
     }
 
     schedule();
-
+    queue_cur->num_selected++;
     skipped_fuzz = fuzz_one(use_argv);
 
     if (!stop_soon && sync_id && !skipped_fuzz) {
@@ -8408,6 +8461,30 @@ int main(int argc, char** argv) {
 
     queue_cur = queue_cur->next;
     current_entry++;
+
+    if (logging) {
+
+        tmp = alloc_printf("%s/length_profile", out_dir);
+        fd = open(tmp, O_WRONLY | O_CREAT, 0600);
+        profile_file = fdopen(fd, "w");
+        if (!plot_file) PFATAL("fdopen() failed");
+
+        struct queue_entry *it = queue;
+        fprintf(profile_file,
+                "p_len,  pn_len,         exploit,         explore,             sum, num_mutate,   find, selected, en_assigned, has_newcov, favor, num_executed\n");
+        while (it) {
+            fprintf(profile_file, "%6d, %6d, %10lld, %6d, %5lld, %10lld, %9d, %8d, %12lld\n",
+                    it->p_len, it->pn_len,
+                    it->num_mutated, it->new_find, it->num_selected, it->energy_used, it->has_new_cov, it->favored, it->num_executed);
+            it = it->next;
+        }
+
+
+        fprintf(profile_file, "\n");
+        fclose(profile_file);
+        ck_free(tmp);
+    }
+
 
   }
 
