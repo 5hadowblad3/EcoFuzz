@@ -6881,6 +6881,9 @@ static u8 fuzz_one(char **argv) {
             }
 
         }
+
+        queue_cur->num_mutated++;
+
         ret_of_fuzz = common_fuzz_stuff(argv, out_buf, temp_len);
         if (ret_of_fuzz)
             goto abandon_entry;
@@ -6906,7 +6909,7 @@ static u8 fuzz_one(char **argv) {
             havoc_queued = queued_paths;
             regret = (float) record_num / stage_max;
 
-            queue_cur->num_mutated++;
+
 
         }
 
